@@ -19,11 +19,11 @@ public enum StreamError: LocalizedError {
     }
 }
 
-/// A service responsible for receiving simulated camera frames over a local TCP connection.
-/// This acts as a mock camera interface when running the application on an iOS Simulator.
+/// A development-utility service responsible for receiving simulated camera frames over a local TCP connection.
+/// Implements API Parity with `DeviceCameraService` to allow seamless `#if targetEnvironment(simulator)` swaps.
 @MainActor
 @Observable
-public class SimulatorCameraService {
+public class CameraService {
     
     /// The most recently received frame from the network stream, serving as the live preview.
     public var livePreviewImage: UIImage? = nil
@@ -33,12 +33,17 @@ public class SimulatorCameraService {
     
     /// The network port this service is configured to listen on.
     public let port: UInt16
-    
-    /// The internal network engine handling the background socket connection.
     private let networkEngine: SimulatorNetworkEngine
     
-    /// Initializes the simulator camera service with a target host and port.
-    ///
+    // MARK: - API Parity Dummy Properties
+    // These properties ensure the view layer compiles flawlessly without compiler directives.
+    public var flashMode: CameraFlashMode = .auto
+    public var availableLenses: [VirtualLens] = []
+    public var activeLens: VirtualLens? = nil
+    public var currentZoomFactor: CGFloat = 1.0
+    public var baseZoomFactor: CGFloat = 1.0
+    
+    /// Initialises the simulator camera service with a target host and port.
     /// - Parameters:
     ///   - host: The IP address of the Mac companion app (defaults to localhost "127.0.0.1").
     ///   - port: The TCP port the companion app is broadcasting on (defaults to 8080).
@@ -46,38 +51,56 @@ public class SimulatorCameraService {
         self.port = port
         self.networkEngine = SimulatorNetworkEngine(host: host, port: port)
         
-        // Safely route the background-decoded images back to the MainActor to update the UI
         self.networkEngine.onImageReceived = { [weak self] image in
-            Task { @MainActor [weak self] in
-                self?.livePreviewImage = image
-            }
+            Task { @MainActor [weak self] in self?.livePreviewImage = image }
         }
     }
     
+    deinit {
+        networkEngine.stop()
+    }
+    
     /// Connects to the local network stream and begins listening for video frames.
-    ///
-    /// - Throws: `StreamError.connectionFailed` if the TCP socket cannot be established.
-    public func connectAndStream() async throws {
+    /// - Throws: `StreamError` if the TCP socket cannot be established.
+    public func startCamera() async throws {
         try await networkEngine.start()
+    }
+    
+    /// Closes the network socket and stops listening for frames.
+    public func stopCamera() {
+        networkEngine.stop()
+        self.livePreviewImage = nil
     }
     
     /// Simulates the action of taking a photograph by capturing the current live preview frame.
     public func takePhoto() {
         self.capturedImage = self.livePreviewImage
     }
+    
+    // MARK: - API Parity Dummy Actions
+    // Empty implementations to satisfy the UI layer on the iOS Simulator.
+    
+    /// API Parity dummy implementation.
+    public func toggleFlash() {}
+    /// API Parity dummy implementation.
+    public func switchCamera() throws {}
+    /// API Parity dummy implementation.
+    public func cycleLens() throws {}
+    /// API Parity dummy implementation.
+    public func zoom(with factor: CGFloat) throws {}
+    /// API Parity dummy implementation.
+    public func focus(at point: CGPoint) throws {}
 }
 
 // MARK: - Internal Network Engine
 
 /// A thread-safe, background engine that handles raw TCP socket communication.
-/// Marked as unchecked Sendable because it internally synchronizes its own state via GCD.
 private final class SimulatorNetworkEngine: @unchecked Sendable {
     private var connection: NWConnection?
     private let host: NWEndpoint.Host
     private let port: NWEndpoint.Port
     private let queue = DispatchQueue(label: "com.simulator.network.engine")
     
-    /// Callback executed when a complete image frame is decoded.
     var onImageReceived: ((UIImage) -> Void)?
     
     init(host: String, port: UInt16) {
@@ -90,8 +113,6 @@ private final class SimulatorNetworkEngine: @unchecked Sendable {
             let newConnection = NWConnection(host: host, port: port, using: .tcp)
             self.connection = newConnection
             
-            // Box the continuation so it is strictly resumed only once,
-            // even if NWConnection transitions states multiple times.
             let box = ContinuationBox(continuation)
             
             newConnection.stateUpdateHandler = { [weak self] state in
@@ -101,8 +122,6 @@ private final class SimulatorNetworkEngine: @unchecked Sendable {
                     self?.readHeader()
                 case .failed(let error):
                     box.resume(throwing: StreamError.connectionFailed(error.localizedDescription))
-                    
-                    // Auto-reconnect after a delay using modern Swift concurrency
                     Task { [weak self] in
                         try? await Task.sleep(for: .seconds(2))
                         try? await self?.start()
@@ -111,9 +130,13 @@ private final class SimulatorNetworkEngine: @unchecked Sendable {
                     break
                 }
             }
-            
             newConnection.start(queue: queue)
         }
+    }
+    
+    func stop() {
+        connection?.cancel()
+        connection = nil
     }
     
     private func readHeader() {
@@ -135,7 +158,6 @@ private final class SimulatorNetworkEngine: @unchecked Sendable {
     }
 }
 
-/// A thread-safe box to ensure `CheckedContinuation` is called exactly once.
 private final class ContinuationBox: @unchecked Sendable {
     private var continuation: CheckedContinuation<Void, Error>?
     private let lock = NSLock()
