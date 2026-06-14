@@ -20,26 +20,17 @@ In Xcode:
 
 ## Unified Usage Example
 
-By importing `SimulatorCameraService` alongside `DeviceCameraService`, you can write a single, unified view. The compiler will automatically route to the network stream on your Mac or the physical AVFoundation pipeline on an iPhone.
+Here is a simple example of how to implement `SimulatorCameraService` in a SwiftUI view.
 
 ```swift
 import SwiftUI
-
-// Conditional Imports
-#if targetEnvironment(simulator)
 import SimulatorCameraService
-#else
-import DeviceCameraService
-#endif
 
-struct UnifiedCameraView: View {
-    
-    // Conditional Instantiation
-    #if targetEnvironment(simulator)
-    @State private var camera = CameraService(host: "127.0.0.1", port: 8080)
-    #else
+struct SimpleCameraView: View {
     @State private var camera = CameraService()
-    #endif
+
+    // If required, host and port number can also be provided to the initialiser
+    // @State private var camera = CameraService(host: "127.0.0.1", port: 8080)
     
     var body: some View {
         ZStack {
@@ -66,8 +57,6 @@ struct UnifiedCameraView: View {
             try? await camera.startCamera()
         }
         .onDisappear {
-            // Automatically closes network ports (Simulator) 
-            // or powers down optical sensors (Device)
             camera.stopCamera()
         }
     }
