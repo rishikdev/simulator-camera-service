@@ -35,9 +35,9 @@ public struct CameraPreview: View {
             if let image = service.livePreviewImage {
                 Image(uiImage: image)
                     .resizable()
-                    .scaledToFill()
+                    .scaledToFit()
                     .frame(width: geo.size.width, height: geo.size.height)
-                    .clipped()
+//                    .clipped()
                     .contentShape(Rectangle())
                     .onTapGesture { location in
                         // Send dummy focus math to keep the API perfectly identical
